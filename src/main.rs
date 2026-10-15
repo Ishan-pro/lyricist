@@ -51,6 +51,7 @@ fn print_lyrics(lyrics:String) {
         synced_lines.insert(time, split_line[1]);
     }
     let mut i = 0;
+    let mut first = true;
     let duration = check_position();
     // CHECK IF SONG IS PAUSED
     //while !check_playing() {
@@ -59,11 +60,18 @@ fn print_lyrics(lyrics:String) {
     //    thread::sleep(Duration::from_secs(1));
     //}
     // ITERATE THROUGH LYRICS TILL YOU FIND THE LYRIC WHICH IS BIGGER IN TIME THAN duration
+    clear_screen();
+    println!("***");
     while i < synced_lines.len()-1 {
         if let Some((time, lyr)) = synced_lines.iter().nth(i) {
             if let Some((time2, lyr2)) = synced_lines.iter().nth(i+1) {
-                if (*time2 as f32) > duration  {
-                    thread::sleep(Duration::from_secs_f32((time2 - time) as f32));
+                if (*time2 as f32) >= duration  {
+                    if first {
+                        thread::sleep(Duration::from_secs_f32((*time2 as f32) - duration));
+                        first = false;
+                    } else {
+                        thread::sleep(Duration::from_secs_f32((time2 - time) as f32));
+                    }
                     clear_screen();
                     println!("{lyr2}");
 
@@ -78,19 +86,22 @@ fn main()-> Result<(), Box<dyn Error>> {
     let output = Command::new("playerctl").arg("metadata").output()
         .expect("Process failed");
     let output = String::from_utf8_lossy(&output.stdout);
-    let title:Vec<_> = output.split("\n").collect();
-    if title.len() <2 { //PLAYERCTL DOESN'T FIND ANYTHING PLAYING / DOESN'T EXIST
+    let lines:Vec<_> = output.split("\n").collect();
+    if lines.len() <2 { //PLAYERCTL DOESN'T FIND ANYTHING PLAYING / DOESN'T EXIST
         println!("Playerctl didn't find any song playing");
         return Ok(());
     }
-    let title = title[1];
+    let title = lines[1];
     let title = title.split("               ")
+                     .collect::<Vec<_>>()[1];
+    let artist = lines[3].split("              ")
                      .collect::<Vec<_>>()[1];
     //MAKING REQUEST TO lrclib.net with title of the song
     let client = reqwest::blocking::Client::new();
     let rootapi = "https://lrclib.net/api";
     let title_slog = title.replace(" ", "+");
-    let url = format!("{rootapi}/search?q={title_slog}");
+    let artist_slog = artist.replace(" ", "+");
+    let url = format!("{rootapi}/search?track_name={title_slog}&artist_name={artist_slog}");
     println!("Getting lyrics for {}...\nurl is {url}", title);
     let response = client.get(url)
                 .header("User-Agent", "Lyricist/1.0").send()?;

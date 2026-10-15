@@ -1,11 +1,11 @@
+use std::fs;
+use walkdir::WalkDir;
 use std::time::Duration;
 use std::process::Command;
 use std::error::Error;
 use reqwest;
 use serde::Deserialize;
-use stopwatch::Stopwatch;
 use std::thread;
-use tokio;
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 
@@ -41,10 +41,11 @@ fn check_playing() -> bool {
 }
 
 fn print_lyrics(lyrics:String) {
+    let lyrics = lyrics.trim().to_string();
     let mut synced_lines = BTreeMap::new();
     let lines:Vec<&str> = lyrics.split("\n").collect();
     for line in &lines {
-        let split_line:Vec<&str> = line.split("] ").collect();
+        let split_line:Vec<&str> = line.split("]").collect();
         let minutes: i32 = split_line[0][1..3].parse().unwrap();
         let seconds: i32 = split_line[0][4..6].parse().unwrap();
         let time = minutes*60 + seconds;
@@ -97,6 +98,47 @@ fn main()-> Result<(), Box<dyn Error>> {
     let artist = lines[3].split("              ")
                      .collect::<Vec<_>>()[1];
     //MAKING REQUEST TO lrclib.net with title of the song
+    match search_local_lyrics(title, artist) {
+        Ok(lyrics) => {
+            print_lyrics(lyrics);
+        }
+        Err(e) => {
+            println!("ERROR: {}", e);
+            if let Ok(network_lyrics) = get_timed_lyrics(title, artist) {
+                fs::write(format!("{title} by- {artist}"), &network_lyrics)?; 
+                //TODO Write in LocalLyrics directory
+                print_lyrics(network_lyrics);
+            }
+            
+        }
+
+    }
+    Ok(())
+}
+
+fn search_local_lyrics(title:&str, artist:&str)->Result<String, String> {
+    let search_dir = ".";
+    let target_filename = format!("{} -by {}.lrc", title, artist);
+    println!("Searching if lyrics exist locally for {}", target_filename);
+    let mut found = false;
+    for entry in WalkDir::new(search_dir).into_iter().flatten() {
+        if entry.file_name().to_string_lossy() == target_filename {
+            println!("lyrics found locally at {}", entry.path().display());
+            match fs::read_to_string(entry.path()) {
+                Ok(content) => {
+                    return Ok(content);
+                }
+                Err(e) => {
+                    return Err("File found but can't be read".to_string());
+
+                }
+            }
+        }
+    }
+    Err("Not Found".to_string())
+}
+
+fn get_timed_lyrics(title:&str, artist:&str)->Result<String, Box<dyn Error>> {
     let client = reqwest::blocking::Client::new();
     let rootapi = "https://lrclib.net/api";
     let title_slog = title.replace(" ", "+");
@@ -107,18 +149,20 @@ fn main()-> Result<(), Box<dyn Error>> {
                 .header("User-Agent", "Lyricist/1.0").send()?;
     if response.status().is_success() {
         let lyrics: Vec<LyricResponse> = response.json()?;
-        if lyrics.is_empty() {
+        if lyrics.is_empty() {    
             println!("This song wasn't found on lrclib.net databases");
-            return Ok(()); 
+            return Err("Not found on lrclib.net databases".into());
         }
         if let Some(synced) = &lyrics[0].synced_lyrics {
-            print_lyrics(synced.to_string());
+            return Ok(synced.to_string());
         } else {
             println!("Time Synced lyrics for this song don't exist yet");
             //TODO SWITCH TO STATIC LYRICS
+            return Err("Time Synced lyrics don't exist".into());
         }
     } else {
-        println!("The response failed");
+        println!("The response failed {}", response.status());
+        return Err("Repsonse failed {response.status()}".into());
+        
     }
-    Ok(())
 }
